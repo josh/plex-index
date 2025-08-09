@@ -1,0 +1,45 @@
+name: Lint
+
+on: push
+
+jobs:
+  ruff:
+    runs-on: ubuntu-24.04
+
+    env:
+      RUFF_OUTPUT_FORMAT: github
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Ruff Formatter
+        run: uv run ruff format --diff .
+
+      - name: Ruff Linter
+        run: uv run ruff check .
+
+  mypy:
+    runs-on: ubuntu-24.04
+
+    strategy:
+      matrix:
+        uv_resolution: ["highest", "lowest-direct"]
+
+    env:
+      UV_RESOLUTION: ${{ matrix.uv_resolution }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: mypy
+        run: uv run mypy .
