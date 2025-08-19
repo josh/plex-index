@@ -24,4 +24,5 @@ jobs:
       - name: Run tests
         run: uv run pytest
         env:
-          FOO: ${{ secrets.FOO }}
+          PLEX_SERVER_NAME: ${{ secrets.PLEX_SERVER_NAME }}
+          PLEX_TOKEN: ${{ secrets.PLEX_TOKEN }}
