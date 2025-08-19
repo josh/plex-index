@@ -1,0 +1,82 @@
+name: Publish
+
+on:
+  schedule:
+    - cron: "5 0 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Download from S3
+        run: |
+          curl --fail --silent --show-error "https://wikidatabots.s3.amazonaws.com/plex.parquet" --output plex.parquet
+
+      # - name: Download from gh-pages
+      #   run: |
+      #     curl --fail --silent --show-error "https://josh.github.io/plex-index/plex.parquet" --output plex.parquet
+
+      - name: Update index
+        run: |
+          uv run plex-index plex.parquet
+        env:
+          PLEX_TOKEN: ${{ secrets.PLEX_TOKEN }}
+          PLEX_SERVER_NAME: ${{ secrets.PLEX_SERVER_NAME }}
+          DISCOVER_LIMIT: ${{ vars.DISCOVER_LIMIT }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plex
+          path: plex.parquet
+          retention-days: 7
+
+  deploy:
+    runs-on: ubuntu-24.04
+    needs: update
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download parquet artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: data/
+
+      - name: Flatten directory structure
+        run: |
+          find data -name "*.parquet" -exec mv {} data/ \;
+          find data -type d -empty -delete
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: data/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
