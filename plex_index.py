@@ -479,8 +479,7 @@ def backfill_metadata(
     updated_rows: list[RowDict] = []
     new_keys: set[RatingKey] = set()
 
-    # TODO: remove limit
-    keys = islice(df.filter(_OLDEST_METADATA | _MISSING_METADATA)["key"], 10)
+    keys = df.filter(_OLDEST_METADATA | _MISSING_METADATA)["key"]
 
     for key in tqdm(keys, desc="Fetching Plex metadata"):
         metadata, similar_guids = fetch_plex_metadata(key, plex_token)
