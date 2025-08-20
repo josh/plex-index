@@ -21,13 +21,9 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Download from S3
+      - name: Download from gh-pages
         run: |
-          curl --fail --silent --show-error "https://wikidatabots.s3.amazonaws.com/plex.parquet" --output plex.parquet
-
-      # - name: Download from gh-pages
-      #   run: |
-      #     curl --fail --silent --show-error "https://josh.github.io/plex-index/plex.parquet" --output plex.parquet
+          curl --fail --silent --show-error "https://josh.github.io/plex-index/plex.parquet" --output plex.parquet
 
       - name: Update index
         run: |
