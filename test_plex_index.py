@@ -12,6 +12,7 @@ from plex_index import (
     discover_media_keys_df,
     fetch_plex_metadata,
     format_gh_step_summary,
+    imdb_watchlist_guids,
     plex_device_info,
     plex_library_guids,
     plex_search_guids,
@@ -539,21 +540,12 @@ def test_fetch_plex_metadata_missing() -> None:
     assert metadata is None
 
 
-@pytest.mark.skipif(
-    not os.environ.get("PLEX_SERVER_NAME"),
-    reason="PLEX_SERVER_NAME not set",
-)
-@pytest.mark.skipif(
-    not os.environ.get("PLEX_TOKEN"),
-    reason="PLEX_TOKEN not set",
-)
 def test_discover_media_keys_df() -> None:
-    plex_server_name = os.environ["PLEX_SERVER_NAME"]
-    plex_token = os.environ["PLEX_TOKEN"]
     df = discover_media_keys_df(
         df=pl.DataFrame({"key": []}, schema={"key": pl.Binary}),
-        plex_server_name=plex_server_name,
-        plex_token=plex_token,
+        plex_server_name=os.environ.get("PLEX_SERVER_NAME"),
+        plex_token=os.environ.get("PLEX_TOKEN"),
+        imdb_watchlist_url=os.environ.get("IMDB_WATCHLIST_URL"),
         limit=10,
     )
     assert df.columns == ["key"]
@@ -638,3 +630,13 @@ def test_roundrobin_function() -> None:
 
     result = list(roundrobin())
     assert result == []
+
+
+@pytest.mark.skipif(
+    not os.environ.get("IMDB_WATCHLIST_URL"),
+    reason="IMDB_WATCHLIST_URL not set",
+)
+def test_imdb_watchlist_guids() -> None:
+    imdb_watchlist_url = os.environ["IMDB_WATCHLIST_URL"]
+    guids = list(itertools.islice(imdb_watchlist_guids(url=imdb_watchlist_url), 10))
+    assert len(guids) == 10

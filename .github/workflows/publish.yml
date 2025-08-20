@@ -35,6 +35,7 @@ jobs:
         env:
           PLEX_TOKEN: ${{ secrets.PLEX_TOKEN }}
           PLEX_SERVER_NAME: ${{ secrets.PLEX_SERVER_NAME }}
+          IMDB_WATCHLIST_URL: ${{ secrets.IMDB_WATCHLIST_URL }}
           DISCOVER_LIMIT: ${{ vars.DISCOVER_LIMIT }}
           REFRESH_LIMIT: ${{ vars.REFRESH_LIMIT }}
 

@@ -26,3 +26,4 @@ jobs:
         env:
           PLEX_SERVER_NAME: ${{ secrets.PLEX_SERVER_NAME }}
           PLEX_TOKEN: ${{ secrets.PLEX_TOKEN }}
+          IMDB_WATCHLIST_URL: ${{ secrets.IMDB_WATCHLIST_URL }}

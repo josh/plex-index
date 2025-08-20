@@ -347,9 +347,19 @@ def wd_random_search_guids() -> Iterator[TypedRatingKey]:
         yield from plex_search_guids(query)
 
 
+def imdb_watchlist_guids(url: str) -> Iterator[TypedRatingKey]:
+    df = pl.read_csv(url, columns="Title")
+    for title in df["Title"]:
+        query = (
+            title.replace("#", "").replace("&", "").replace("'", "").replace('"', "")
+        )
+        yield from plex_search_guids(query)
+
+
 def discover_media_keys(
     plex_server_name: str | None,
     plex_token: str | None,
+    imdb_watchlist_url: str | None,
 ) -> Iterator[RatingKey]:
     yield from wikidata_plex_media_keys()
 
@@ -368,6 +378,10 @@ def discover_media_keys(
     else:
         logger.warning("skipping Plex library discovery")
 
+    if imdb_watchlist_url:
+        for _, key in imdb_watchlist_guids(url=imdb_watchlist_url):
+            yield key
+
     for _, key in wd_random_search_guids():
         yield key
 
@@ -376,6 +390,7 @@ def discover_media_keys_df(
     df: pl.DataFrame,
     plex_server_name: str | None,
     plex_token: str | None,
+    imdb_watchlist_url: str | None,
     limit: int,
 ) -> pl.DataFrame:
     seen_keys: set[RatingKey] = set(df["key"])
@@ -384,6 +399,7 @@ def discover_media_keys_df(
         for key in discover_media_keys(
             plex_server_name=plex_server_name,
             plex_token=plex_token,
+            imdb_watchlist_url=imdb_watchlist_url,
         )
         if key not in seen_keys
     )
@@ -544,6 +560,13 @@ def backfill_metadata(
     help="Plex server name",
 )
 @click.option(
+    "--imdb-watchlist-url",
+    type=str,
+    required=False,
+    envvar="IMDB_WATCHLIST_URL",
+    help="IMDB watchlist URL",
+)
+@click.option(
     "--discover-limit",
     type=int,
     default=10,
@@ -571,6 +594,7 @@ def main(
     filename: str,
     plex_token: str,
     plex_server_name: str,
+    imdb_watchlist_url: str,
     discover_limit: int,
     refresh_limit: int,
     dry_run: bool,
@@ -591,6 +615,7 @@ def main(
         df=df,
         plex_server_name=plex_server_name,
         plex_token=plex_token,
+        imdb_watchlist_url=imdb_watchlist_url,
         limit=discover_limit,
     )
     df2 = backfill_metadata(
