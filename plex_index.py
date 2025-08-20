@@ -468,18 +468,18 @@ def fetch_plex_metadata(
         raise
 
 
-_OLDEST_METADATA = pl.col("retrieved_at").rank("ordinal") <= 1_500
-_MISSING_METADATA = pl.col("retrieved_at").is_null()
-
-
 def backfill_metadata(
     df: pl.DataFrame,
     plex_token: str,
+    refresh_limit: int,
 ) -> pl.DataFrame:
     updated_rows: list[RowDict] = []
     new_keys: set[RatingKey] = set()
 
-    keys = df.filter(_OLDEST_METADATA | _MISSING_METADATA)["key"]
+    keys = df.filter(
+        (pl.col("retrieved_at").rank("ordinal") <= refresh_limit)
+        | (pl.col("retrieved_at").is_null())
+    )["key"]
 
     for key in tqdm(keys, desc="Fetching Plex metadata"):
         metadata, similar_guids = fetch_plex_metadata(key, plex_token)
@@ -546,9 +546,16 @@ def backfill_metadata(
 @click.option(
     "--discover-limit",
     type=int,
-    default=15,
+    default=10,
     envvar="DISCOVER_LIMIT",
     help="Wikidata search limit",
+)
+@click.option(
+    "--refresh-limit",
+    type=int,
+    default=10,
+    envvar="REFRESH_LIMIT",
+    help="Refresh oldest items limit",
 )
 @click.option(
     "--dry-run",
@@ -565,6 +572,7 @@ def main(
     plex_token: str,
     plex_server_name: str,
     discover_limit: int,
+    refresh_limit: int,
     dry_run: bool,
     verbose: bool,
 ) -> None:
@@ -585,7 +593,11 @@ def main(
         plex_token=plex_token,
         limit=discover_limit,
     )
-    df2 = backfill_metadata(df2, plex_token)
+    df2 = backfill_metadata(
+        df2,
+        plex_token,
+        refresh_limit=refresh_limit,
+    )
     df2 = df2.sort(by=pl.col("key").bin.encode("hex"))
 
     if df2.height < df.height:
