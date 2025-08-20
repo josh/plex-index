@@ -8,6 +8,7 @@ import pytest
 from plex_index import (
     change_summary,
     compute_stats,
+    decode_plex_guid,
     discover_media_keys_df,
     fetch_plex_metadata,
     format_gh_step_summary,
@@ -15,6 +16,8 @@ from plex_index import (
     plex_library_guids,
     plex_search_guids,
     rating_key,
+    roundrobin,
+    typed_rating_key,
     update_or_append,
     wd_random_search_guids,
     wd_random_titles,
@@ -556,3 +559,82 @@ def test_discover_media_keys_df() -> None:
     assert df.columns == ["key"]
     assert df["key"].dtype == pl.Binary
     assert len(df) == 10
+
+
+def test_decode_plex_guid_valid() -> None:
+    result = decode_plex_guid("plex://movie/5d776be17a53e9001e732ab9")
+    assert result is not None
+    assert result[0] == "movie"
+    assert result[1] == rating_key("5d776be17a53e9001e732ab9")
+
+    result = decode_plex_guid("plex://show/5d9c0874ffd9ef001e99607a")
+    assert result is not None
+    assert result[0] == "show"
+    assert result[1] == rating_key("5d9c0874ffd9ef001e99607a")
+
+    result = decode_plex_guid("plex://episode/5d9c0874ffd9ef001e99607b")
+    assert result is not None
+    assert result[0] == "episode"
+    assert result[1] == rating_key("5d9c0874ffd9ef001e99607b")
+
+    result = decode_plex_guid("plex://season/5d9c0874ffd9ef001e99607c")
+    assert result is not None
+    assert result[0] == "season"
+    assert result[1] == rating_key("5d9c0874ffd9ef001e99607c")
+
+
+def test_decode_plex_guid_invalid() -> None:
+    result = decode_plex_guid("invalid_guid")
+    assert result is None
+
+    result = decode_plex_guid("plex://invalid/5d776be17a53e9001e732ab9")
+    assert result is None
+
+    result = decode_plex_guid("plex://movie/123456789012")
+    assert result is None
+
+    result = decode_plex_guid("plex://movie/5d776be17a53e9001e732ab9extra")
+    assert result is not None
+    assert result[0] == "movie"
+    assert result[1] == rating_key("5d776be17a53e9001e732ab9")
+
+    result = decode_plex_guid("")
+    assert result is None
+
+
+def test_rating_key_validation() -> None:
+    key = rating_key("5d776be17a53e9001e732ab9")
+    assert len(key) == 12
+    assert key == bytes.fromhex("5d776be17a53e9001e732ab9")
+
+    with pytest.raises(AssertionError):
+        rating_key("123456789012345")
+
+    with pytest.raises(AssertionError):
+        rating_key("12345678901234567890123")
+
+
+def test_typed_rating_key_validation() -> None:
+    result = typed_rating_key("movie", "5d776be17a53e9001e732ab9")
+    assert result[0] == "movie"
+    assert result[1] == rating_key("5d776be17a53e9001e732ab9")
+
+    with pytest.raises(AssertionError):
+        typed_rating_key("invalid_type", "5d776be17a53e9001e732ab9")
+
+    with pytest.raises(AssertionError):
+        typed_rating_key("movie", "123456789012345")
+
+
+def test_roundrobin_function() -> None:
+    result = list(roundrobin([1, 2], [3, 4], [5]))
+    assert result == [1, 3, 5, 2, 4]
+
+    result = list(roundrobin([1, 2], [], [3, 4]))
+    assert result == [1, 3, 2, 4]
+
+    result = list(roundrobin([1, 2, 3]))
+    assert result == [1, 2, 3]
+
+    result = list(roundrobin())
+    assert result == []
