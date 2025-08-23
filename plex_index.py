@@ -270,7 +270,7 @@ def plex_search_guids(query: str) -> Iterator[TypedRatingKey]:
         "X-Plex-Provider-Version": "7.2.0",
     }
     req = urllib.request.Request(url=url, headers=headers)
-    logger.info("Searching Plex: %s", query)
+    logger.debug("Searching Plex: %s", query)
     with urllib.request.urlopen(req, timeout=60) as response:
         data = response.read().decode("utf-8", errors="ignore")
         for m in re.findall(GUID_RE, data):
