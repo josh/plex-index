@@ -455,7 +455,7 @@ def fetch_plex_metadata(
             imdb: int | None = None
             tmdb: int | None = None
             tvdb: int | None = None
-            for guid_obj in metadata["Guid"]:
+            for guid_obj in metadata.get("Guid", []):
                 scheme, id = guid_obj["id"].split("://", 1)
                 if scheme == "imdb":
                     imdb = int(id[2:])
