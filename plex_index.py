@@ -276,14 +276,14 @@ def plex_search_guids(query: str) -> Iterator[TypedRatingKey]:
         try:
             with urllib.request.urlopen(req, timeout=60) as response:
                 data = response.read().decode("utf-8", errors="ignore")
-            break
+            for m in re.findall(GUID_RE, data):
+                yield typed_rating_key(*m)
+            return
         except urllib.error.URLError as e:
             if attempt == 2:
                 logger.warning("search failed for %s: %s", query, e)
                 return
             time.sleep(2**attempt)
-    for m in re.findall(GUID_RE, data):
-        yield typed_rating_key(*m)
 
 
 _MOVIE_TITLE_QUERY = """
