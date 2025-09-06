@@ -271,8 +271,8 @@ def plex_search_guids(query: str) -> Iterator[TypedRatingKey]:
         "X-Plex-Provider-Version": "7.2.0",
     }
     logger.debug("Searching Plex: %s", query)
+    req = urllib.request.Request(url=url, headers=headers)
     for attempt in range(3):
-        req = urllib.request.Request(url=url, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=60) as response:
                 data = response.read().decode("utf-8", errors="ignore")
@@ -282,8 +282,6 @@ def plex_search_guids(query: str) -> Iterator[TypedRatingKey]:
                 logger.warning("search failed for %s: %s", query, e)
                 return
             time.sleep(2**attempt)
-    else:
-        return
     for m in re.findall(GUID_RE, data):
         yield typed_rating_key(*m)
 
