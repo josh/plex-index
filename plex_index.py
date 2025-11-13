@@ -489,9 +489,7 @@ def fetch_plex_metadata(
             )
             return metadata, similar_guids
     except http.client.RemoteDisconnected as exc:
-        logger.warning(
-            "failed to fetch metadata for key %s: %s", key.hex(), exc
-        )
+        logger.warning("failed to fetch metadata for key %s: %s", key.hex(), exc)
         return None, []
     except urllib.error.HTTPError as e:
         if e.code == 404:
