@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   update:
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v5
@@ -43,7 +43,7 @@ jobs:
           retention-days: 7
 
   deploy:
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-24.04
     needs: update
 
     permissions:
