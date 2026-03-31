@@ -2,18 +2,20 @@ import http.client
 import json
 import logging
 import os
+import random
 import re
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable, Iterator
+from collections import deque
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from io import StringIO
-from itertools import cycle, islice
-from typing import Any, Literal, NewType, TypedDict, cast
+from itertools import islice
+from typing import Literal, NewType, TypedDict, cast
 
 import click
 import polars as pl
@@ -232,31 +234,6 @@ def plex_library_guids(server_uri: str, token: str) -> Iterator[TypedRatingKey]:
                 yield typed_rating_key(*m)
 
 
-def sparql(query: str) -> Any:
-    headers = {
-        "Accept": "application/json",
-        "User-Agent": "PlexIndex/0.0 (https://github.com/josh/plex-index)",
-    }
-    data = urllib.parse.urlencode({"query": query}).encode("utf-8")
-    req = urllib.request.Request(
-        "https://query.wikidata.org/sparql",
-        data=data,
-        headers=headers,
-        method="POST",
-    )
-    logger.info("Querying Wikidata SPARQL: %s", query)
-    with urllib.request.urlopen(req, timeout=90) as response:
-        return json.load(response)
-
-
-def wikidata_plex_media_keys() -> Iterator[RatingKey]:
-    results = sparql("SELECT DISTINCT ?guid WHERE { ?item ps:P11460 ?guid. }")
-    for binding in results["results"]["bindings"]:
-        value = binding["guid"]["value"]
-        if m := re.match(r"[a-f0-9]{24}", value):
-            yield rating_key(m.group(0))
-
-
 def plex_search_guids(query: str) -> Iterator[TypedRatingKey]:
     url = "https://discover.provider.plex.tv/library/search"
     params = {
@@ -291,74 +268,64 @@ def plex_search_guids(query: str) -> Iterator[TypedRatingKey]:
             time.sleep(2**attempt)
 
 
-_MOVIE_TITLE_QUERY = """
-SELECT ?title WHERE {
-  SERVICE bd:sample {
-    ?item wdt:P4947 _:b1.
-    bd:serviceParam bd:sample.limit ?limit ;
-      bd:sample.sampleType "RANDOM".
-  }
-  ?item wdt:P1476 ?title.
-  OPTIONAL { ?item wdt:P11460 ?plex_guid. }
-  FILTER(!(BOUND(?plex_guid)))
-}
-"""
+def plex_discover_search(query: str) -> tuple[list[TypedRatingKey], list[str]]:
+    url = "https://discover.provider.plex.tv/library/search"
+    params = {
+        "query": query,
+        "limit": "100",
+        "searchTypes": "movies,tv",
+        "includeMetadata": "1",
+        "searchProviders": "discover",
+    }
+    url += "?" + urllib.parse.urlencode(params)
+    headers = {
+        "Accept": "application/json",
+        "X-Plex-Provider-Version": "7.2.0",
+    }
+    logger.debug("Discover search: %s", query)
+    req = urllib.request.Request(url=url, headers=headers)
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                data = json.load(response)
+            guids: list[TypedRatingKey] = []
+            container = data.get("MediaContainer", {})
+            for sr in container.get("SearchResults", []):
+                for result in sr.get("SearchResult", []):
+                    metadata = result.get("Metadata", {})
+                    guid = metadata.get("guid", "")
+                    if typed_key := decode_plex_guid(guid):
+                        guids.append(typed_key)
+            suggested_terms: list[str] = container.get("suggestedTerms", [])
+            return guids, suggested_terms
+        except (
+            TimeoutError,
+            urllib.error.URLError,
+            http.client.RemoteDisconnected,
+        ) as e:
+            if attempt == 2:
+                logger.warning("discover search failed for %s: %s", query, e)
+                return [], []
+            time.sleep(2**attempt)
+    return [], []
 
-_TV_TITLE_QUERY = """
-SELECT ?title WHERE {
-  SERVICE bd:sample {
-    ?item wdt:P4983 _:b1.
-    bd:serviceParam bd:sample.limit ?limit ;
-      bd:sample.sampleType "RANDOM".
-  }
-  ?item wdt:P1476 ?title.
-  OPTIONAL { ?item wdt:P11460 ?plex_guid. }
-  FILTER(!(BOUND(?plex_guid)))
-}
-"""
 
-
-def roundrobin[T](*iterables: Iterable[T]) -> Iterator[T]:
-    iterators: Iterator[Iterator[T]] = map(iter, iterables)
-    for num_active in range(len(iterables), 0, -1):
-        iterators = cycle(islice(iterators, num_active))
-        yield from map(next, iterators)
-
-
-def wd_random_titles(
-    tmdb_type: Literal["movie", "tv"] | None = None,
-    sample_size: int = 100,
-) -> Iterator[str]:
-    if tmdb_type is None:
-        yield from roundrobin(
-            wd_random_titles(tmdb_type="movie"),
-            wd_random_titles(tmdb_type="tv"),
-        )
-        return
-    elif tmdb_type == "movie":
-        query = _MOVIE_TITLE_QUERY
-    elif tmdb_type == "tv":
-        query = _TV_TITLE_QUERY
-    query = query.replace("?limit", str(sample_size))
-
-    seen: set[str] = set()
+def random_search_guids() -> Iterator[TypedRatingKey]:
+    seeds = list("abcdefghijklmnopqrstuvwxyz")
+    seen_queries: set[str] = set()
     while True:
-        results = sparql(query)
-        for binding in results["results"]["bindings"]:
-            title = binding["title"]["value"]
-            if title in seen:
-                logger.debug("skipping duplicate title: %s", title)
+        random.shuffle(seeds)
+        queue: deque[str] = deque(seeds)
+        while queue:
+            query = queue.popleft()
+            if query in seen_queries:
                 continue
-            seen.add(title)
-            yield title
-
-
-def wd_random_search_guids() -> Iterator[TypedRatingKey]:
-    for title in wd_random_titles():
-        query = (
-            title.replace("#", "").replace("&", "").replace("'", "").replace('"', "")
-        )
-        yield from plex_search_guids(query)
+            seen_queries.add(query)
+            guids, suggestions = plex_discover_search(query)
+            yield from guids
+            for term in suggestions:
+                if term not in seen_queries:
+                    queue.append(term)
 
 
 def imdb_watchlist_guids(url: str) -> Iterator[TypedRatingKey]:
@@ -375,8 +342,6 @@ def discover_media_keys(
     plex_token: str | None,
     imdb_watchlist_url: str | None,
 ) -> Iterator[RatingKey]:
-    yield from wikidata_plex_media_keys()
-
     if plex_server_name and plex_token:
         if device := plex_device_info(
             device_name=plex_server_name,
@@ -396,7 +361,7 @@ def discover_media_keys(
         for _, key in imdb_watchlist_guids(url=imdb_watchlist_url):
             yield key
 
-    for _, key in wd_random_search_guids():
+    for _, key in random_search_guids():
         yield key
 
 
@@ -588,7 +553,7 @@ def backfill_metadata(
     type=int,
     default=10,
     envvar="DISCOVER_LIMIT",
-    help="Wikidata search limit",
+    help="Discover search limit",
 )
 @click.option(
     "--refresh-limit",

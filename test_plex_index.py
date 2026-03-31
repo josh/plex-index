@@ -14,15 +14,13 @@ from plex_index import (
     format_gh_step_summary,
     imdb_watchlist_guids,
     plex_device_info,
+    plex_discover_search,
     plex_library_guids,
     plex_search_guids,
+    random_search_guids,
     rating_key,
-    roundrobin,
     typed_rating_key,
     update_or_append,
-    wd_random_search_guids,
-    wd_random_titles,
-    wikidata_plex_media_keys,
 )
 
 
@@ -452,11 +450,6 @@ def test_plex_library_guids() -> None:
     assert len(list(itertools.islice(itr, 10))) == 10
 
 
-def test_wikidata_plex_media_keys() -> None:
-    itr = wikidata_plex_media_keys()
-    assert len(list(itertools.islice(itr, 10))) == 10
-
-
 def test_plex_search_guids() -> None:
     itr = plex_search_guids(query="A Few Good Men")
     results = list(itertools.islice(itr, 10))
@@ -466,27 +459,16 @@ def test_plex_search_guids() -> None:
     assert rating_key("5d7768288718ba001e3120b3") in keys
 
 
-def test_wd_random_titles_movie() -> None:
-    itr = wd_random_titles(tmdb_type="movie")
+def test_plex_discover_search() -> None:
+    guids, terms = plex_discover_search("star")
+    assert len(guids) > 0
+    assert len(terms) > 0
+
+
+def test_random_search_guids() -> None:
+    itr = random_search_guids()
     results = list(itertools.islice(itr, 10))
     assert len(results) == 10
-
-
-def test_wd_random_titles_tv() -> None:
-    itr = wd_random_titles(tmdb_type="tv")
-    results = list(itertools.islice(itr, 10))
-    assert len(results) == 10
-
-
-def test_wd_random_titles() -> None:
-    itr = wd_random_titles()
-    results = list(itertools.islice(itr, 10))
-    assert len(results) == 10
-
-
-def test_wd_random_search_guids() -> None:
-    itr = wd_random_search_guids()
-    assert len(list(itertools.islice(itr, 10))) == 10
 
 
 @pytest.mark.skipif(
@@ -616,20 +598,6 @@ def test_typed_rating_key_validation() -> None:
 
     with pytest.raises(AssertionError):
         typed_rating_key("movie", "123456789012345")
-
-
-def test_roundrobin_function() -> None:
-    result = list(roundrobin([1, 2], [3, 4], [5]))
-    assert result == [1, 3, 5, 2, 4]
-
-    result = list(roundrobin([1, 2], [], [3, 4]))
-    assert result == [1, 3, 2, 4]
-
-    result = list(roundrobin([1, 2, 3]))
-    assert result == [1, 2, 3]
-
-    result = list(roundrobin())
-    assert result == []
 
 
 @pytest.mark.skipif(
