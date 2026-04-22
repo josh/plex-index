@@ -252,7 +252,7 @@ def plex_search_guids(query: str) -> Iterator[TypedRatingKey]:
     req = urllib.request.Request(url=url, headers=headers)
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(req, timeout=60) as response:
+            with urllib.request.urlopen(req, timeout=10) as response:
                 data = response.read().decode("utf-8", errors="ignore")
             for m in re.findall(GUID_RE, data):
                 yield typed_rating_key(*m)
@@ -286,7 +286,7 @@ def plex_discover_search(query: str) -> tuple[list[TypedRatingKey], list[str]]:
     req = urllib.request.Request(url=url, headers=headers)
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(req, timeout=60) as response:
+            with urllib.request.urlopen(req, timeout=10) as response:
                 data = json.load(response)
             guids: list[TypedRatingKey] = []
             container = data.get("MediaContainer", {})
@@ -310,18 +310,23 @@ def plex_discover_search(query: str) -> tuple[list[TypedRatingKey], list[str]]:
     return [], []
 
 
-def random_search_guids() -> Iterator[TypedRatingKey]:
+def random_search_guids(max_queries: int = 500) -> Iterator[TypedRatingKey]:
     seeds = list("abcdefghijklmnopqrstuvwxyz")
     seen_queries: set[str] = set()
+    query_count = 0
     while True:
         random.shuffle(seeds)
         queue: deque[str] = deque(seeds)
         found_new = False
         while queue:
+            if query_count >= max_queries:
+                logger.warning("Reached max queries limit: %d", max_queries)
+                return
             query = queue.popleft()
             if query in seen_queries:
                 continue
             found_new = True
+            query_count += 1
             seen_queries.add(query)
             guids, suggestions = plex_discover_search(query)
             yield from guids
