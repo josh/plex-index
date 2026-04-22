@@ -316,16 +316,20 @@ def random_search_guids() -> Iterator[TypedRatingKey]:
     while True:
         random.shuffle(seeds)
         queue: deque[str] = deque(seeds)
+        found_new = False
         while queue:
             query = queue.popleft()
             if query in seen_queries:
                 continue
+            found_new = True
             seen_queries.add(query)
             guids, suggestions = plex_discover_search(query)
             yield from guids
             for term in suggestions:
                 if term not in seen_queries:
                     queue.append(term)
+        if not found_new:
+            return
 
 
 def imdb_watchlist_guids(url: str) -> Iterator[TypedRatingKey]:
