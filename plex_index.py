@@ -362,11 +362,19 @@ def discover_media_keys(
         logger.warning("skipping Plex library discovery")
 
     if imdb_watchlist_url:
+        logger.info("Fetching IMDB watchlist: %s", imdb_watchlist_url)
+        count = 0
         for _, key in imdb_watchlist_guids(url=imdb_watchlist_url):
+            count += 1
             yield key
+        logger.info("Finished IMDB watchlist: %d keys", count)
 
+    logger.info("Starting random search discovery")
+    count = 0
     for _, key in random_search_guids():
+        count += 1
         yield key
+    logger.info("Finished random search discovery: %d keys", count)
 
 
 def discover_media_keys_df(
