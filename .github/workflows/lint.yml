@@ -4,7 +4,7 @@ on: push
 
 jobs:
   ruff:
-    runs-on: ubuntu-slim
+    runs-on: self-hosted
 
     env:
       RUFF_OUTPUT_FORMAT: github
@@ -24,7 +24,7 @@ jobs:
         run: uv run ruff check .
 
   mypy:
-    runs-on: ubuntu-slim
+    runs-on: self-hosted
 
     strategy:
       matrix:
