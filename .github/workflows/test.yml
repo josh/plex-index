@@ -4,7 +4,7 @@ on: push
 
 jobs:
   pytest:
-    runs-on: ubuntu-slim
+    runs-on: self-hosted
 
     strategy:
       matrix:
