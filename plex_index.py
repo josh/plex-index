@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import re
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -12,7 +13,7 @@ import xml.etree.ElementTree as ET
 from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from io import StringIO
 from itertools import islice
 from typing import Literal, NewType, TypedDict, cast
@@ -158,9 +159,9 @@ def format_gh_step_summary(
 
         buf = StringIO()
         print(f"## {filename}", file=buf)
-        print("", file=buf)
+        print(file=buf)
         print(df_stats, file=buf)
-        print("", file=buf)
+        print(file=buf)
         print(f"shape: ({df_new.shape[0]:,}, {df_new.shape[1]:,})", file=buf)
         print(f"changes: +{added:,} -{removed:,} ~{updated:,}", file=buf)
         print(f"rss: {df_new.estimated_size('mb'):,.1f}MB", file=buf)
@@ -505,7 +506,7 @@ def backfill_metadata(
                     "key": metadata.key,
                     "type": metadata.type,
                     "success": True,
-                    "retrieved_at": datetime.now(),
+                    "retrieved_at": datetime.now(UTC),
                     "year": metadata.year,
                     "imdb_numeric_id": metadata.imdb_numeric_id,
                     "tmdb_id": metadata.tmdb_id,
@@ -518,7 +519,7 @@ def backfill_metadata(
                     "key": key,
                     "type": None,
                     "success": False,
-                    "retrieved_at": datetime.now(),
+                    "retrieved_at": datetime.now(UTC),
                     "year": None,
                     "imdb_numeric_id": None,
                     "tmdb_id": None,
@@ -630,7 +631,7 @@ def main(
             df2.height,
             df.height,
         )
-        exit(1)
+        sys.exit(1)
 
     logger.debug(df2)
 
