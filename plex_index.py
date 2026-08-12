@@ -32,6 +32,15 @@ GUID_RE = r"plex://(?P<type>episode|movie|season|show)/(?P<key>[a-f0-9]{24})"
 RatingKey = NewType("RatingKey", bytes)
 TypedRatingKey = NewType("TypedRatingKey", tuple[GUID_TYPE, RatingKey])
 
+TRANSIENT_ERRORS = (
+    TimeoutError,
+    ConnectionError,
+    urllib.error.URLError,
+    http.client.HTTPException,
+)
+RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+MAX_CONSECUTIVE_FAILURES = 10
+
 DF_SCHEMA = pl.Schema(
     {
         "key": pl.Binary(),
@@ -169,6 +178,27 @@ def format_gh_step_summary(
         return buf.getvalue()
 
 
+def urlopen_retry(
+    req: urllib.request.Request,
+    timeout: float,
+    attempts: int = 3,
+) -> bytes:
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return cast(bytes, response.read())
+        except urllib.error.HTTPError as e:
+            if e.code not in RETRYABLE_STATUS or attempt == attempts - 1:
+                raise
+            logger.warning("HTTP %d retrying: %s", e.code, req.full_url)
+        except TRANSIENT_ERRORS as e:
+            if attempt == attempts - 1:
+                raise
+            logger.warning("%s retrying: %s", e, req.full_url)
+        time.sleep(2**attempt)
+    raise AssertionError("unreachable")
+
+
 @dataclass
 class PlexDevice:
     name: str
@@ -181,23 +211,21 @@ def plex_device_info(device_name: str, token: str) -> PlexDevice | None:
     headers = {"X-Plex-Token": token}
     req = urllib.request.Request(url="https://plex.tv/api/resources", headers=headers)
     logger.info('Fetching Plex "%s" device info', device_name)
-    with urllib.request.urlopen(req, timeout=10) as response:
-        tree = ET.parse(response)
-        devices = tree.findall("./Device")
-        for device in devices:
-            if device.get("name") != device_name:
-                continue
-            uri = ""
-            access_token = device.get("accessToken", "")
-            public_address = device.get("publicAddress", "")
-            for connection in device.findall("./Connection[@local='0']"):
-                uri = connection.get("uri", "")
-            return PlexDevice(
-                name=device_name,
-                public_address=public_address,
-                uri=uri,
-                access_token=access_token,
-            )
+    root = ET.fromstring(urlopen_retry(req, timeout=10))
+    for device in root.findall("./Device"):
+        if device.get("name") != device_name:
+            continue
+        uri = ""
+        access_token = device.get("accessToken", "")
+        public_address = device.get("publicAddress", "")
+        for connection in device.findall("./Connection[@local='0']"):
+            uri = connection.get("uri", "")
+        return PlexDevice(
+            name=device_name,
+            public_address=public_address,
+            uri=uri,
+            access_token=access_token,
+        )
     return None
 
 
@@ -229,10 +257,9 @@ def plex_library_guids(server_uri: str, token: str) -> Iterator[TypedRatingKey]:
         url = f"{server_uri}/library/sections/{section}/all"
         req = urllib.request.Request(url=url, headers=headers)
         logger.info("Fetching Plex library section=%s", section)
-        with urllib.request.urlopen(req, timeout=60) as response:
-            data = response.read().decode("utf-8", errors="ignore")
-            for m in re.findall(GUID_RE, data):
-                yield typed_rating_key(*m)
+        data = urlopen_retry(req, timeout=60).decode("utf-8", errors="ignore")
+        for m in re.findall(GUID_RE, data):
+            yield typed_rating_key(*m)
 
 
 def plex_search_guids(query: str) -> Iterator[TypedRatingKey]:
@@ -251,22 +278,13 @@ def plex_search_guids(query: str) -> Iterator[TypedRatingKey]:
     }
     logger.debug("Searching Plex: %s", query)
     req = urllib.request.Request(url=url, headers=headers)
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(req, timeout=10) as response:
-                data = response.read().decode("utf-8", errors="ignore")
-            for m in re.findall(GUID_RE, data):
-                yield typed_rating_key(*m)
-            return
-        except (
-            TimeoutError,
-            urllib.error.URLError,
-            http.client.RemoteDisconnected,
-        ) as e:
-            if attempt == 2:
-                logger.warning("search failed for %s: %s", query, e)
-                return
-            time.sleep(2**attempt)
+    try:
+        data = urlopen_retry(req, timeout=10).decode("utf-8", errors="ignore")
+    except TRANSIENT_ERRORS as e:
+        logger.warning("search failed for %s: %s", query, e)
+        return
+    for m in re.findall(GUID_RE, data):
+        yield typed_rating_key(*m)
 
 
 def plex_discover_search(query: str) -> tuple[list[TypedRatingKey], list[str]]:
@@ -285,30 +303,22 @@ def plex_discover_search(query: str) -> tuple[list[TypedRatingKey], list[str]]:
     }
     logger.debug("Discover search: %s", query)
     req = urllib.request.Request(url=url, headers=headers)
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(req, timeout=10) as response:
-                data = json.load(response)
-            guids: list[TypedRatingKey] = []
-            container = data.get("MediaContainer", {})
-            for sr in container.get("SearchResults", []):
-                for result in sr.get("SearchResult", []):
-                    metadata = result.get("Metadata", {})
-                    guid = metadata.get("guid", "")
-                    if typed_key := decode_plex_guid(guid):
-                        guids.append(typed_key)
-            suggested_terms: list[str] = container.get("suggestedTerms", [])
-            return guids, suggested_terms
-        except (
-            TimeoutError,
-            urllib.error.URLError,
-            http.client.RemoteDisconnected,
-        ) as e:
-            if attempt == 2:
-                logger.warning("discover search failed for %s: %s", query, e)
-                return [], []
-            time.sleep(2**attempt)
-    return [], []
+    try:
+        data = json.loads(urlopen_retry(req, timeout=10))
+    except (*TRANSIENT_ERRORS, json.JSONDecodeError) as e:
+        logger.warning("discover search failed for %s: %s", query, e)
+        return [], []
+
+    guids: list[TypedRatingKey] = []
+    container = data.get("MediaContainer", {})
+    for sr in container.get("SearchResults", []):
+        for result in sr.get("SearchResult", []):
+            metadata = result.get("Metadata", {})
+            guid = metadata.get("guid", "")
+            if typed_key := decode_plex_guid(guid):
+                guids.append(typed_key)
+    suggested_terms: list[str] = container.get("suggestedTerms", [])
+    return guids, suggested_terms
 
 
 def random_search_guids(max_queries: int = 500) -> Iterator[TypedRatingKey]:
@@ -439,49 +449,48 @@ def fetch_plex_metadata(
         "X-Plex-Token": token,
     }
     req = urllib.request.Request(url, headers=headers)
+    logger.debug("fetching Plex metadata for key: %s", key.hex())
     try:
-        logger.debug("fetching Plex metadata for key: %s", key.hex())
-        with urllib.request.urlopen(req, timeout=30) as response:
-            data = json.load(response)
-            metadata = data["MediaContainer"]["Metadata"][0]
-            assert metadata["ratingKey"] == key.hex()
-            assert metadata["type"] in GUID_TYPES
-
-            year: int | None = metadata.get("year", None)
-
-            imdb: int | None = None
-            tmdb: int | None = None
-            tvdb: int | None = None
-            for guid_obj in metadata.get("Guid", []):
-                scheme, id = guid_obj["id"].split("://", 1)
-                if scheme == "imdb":
-                    imdb = int(id[2:])
-                elif scheme == "tmdb":
-                    tmdb = int(id)
-                elif scheme == "tvdb":
-                    tvdb = int(id)
-
-            similar_guids: list[TypedRatingKey] = []
-            for obj in metadata.get("Similar", []):
-                if typed_key := decode_plex_guid(obj["guid"]):
-                    similar_guids.append(typed_key)
-
-            metadata = PlexMetadata(
-                key=key,
-                type=metadata["type"],
-                year=year,
-                imdb_numeric_id=imdb,
-                tmdb_id=tmdb,
-                tvdb_id=tvdb,
-            )
-            return metadata, similar_guids
-    except http.client.RemoteDisconnected as exc:
-        logger.warning("failed to fetch metadata for key %s: %s", key.hex(), exc)
-        return None, []
+        data = json.loads(urlopen_retry(req, timeout=30))
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return None, []
         raise
+
+    metadata = data["MediaContainer"]["Metadata"][0]
+    assert metadata["ratingKey"] == key.hex()
+    assert metadata["type"] in GUID_TYPES
+
+    year: int | None = metadata.get("year", None)
+
+    imdb: int | None = None
+    tmdb: int | None = None
+    tvdb: int | None = None
+    for guid_obj in metadata.get("Guid", []):
+        scheme, id = guid_obj["id"].split("://", 1)
+        if scheme == "imdb":
+            imdb = int(id[2:])
+        elif scheme == "tmdb":
+            tmdb = int(id)
+        elif scheme == "tvdb":
+            tvdb = int(id)
+
+    similar_guids: list[TypedRatingKey] = []
+    for obj in metadata.get("Similar", []):
+        if typed_key := decode_plex_guid(obj["guid"]):
+            similar_guids.append(typed_key)
+
+    return (
+        PlexMetadata(
+            key=key,
+            type=metadata["type"],
+            year=year,
+            imdb_numeric_id=imdb,
+            tmdb_id=tmdb,
+            tvdb_id=tvdb,
+        ),
+        similar_guids,
+    )
 
 
 def backfill_metadata(
@@ -497,8 +506,22 @@ def backfill_metadata(
         | (pl.col("retrieved_at").is_null())
     )["key"]
 
+    consecutive_failures = 0
+
     for key in tqdm(keys, desc="Fetching Plex metadata"):
-        metadata, similar_guids = fetch_plex_metadata(key, plex_token)
+        try:
+            metadata, similar_guids = fetch_plex_metadata(key, plex_token)
+        except TRANSIENT_ERRORS as e:
+            logger.warning("failed to fetch metadata for key %s: %s", key.hex(), e)
+            consecutive_failures += 1
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                logger.error(
+                    "giving up backfill after %d consecutive failures",
+                    consecutive_failures,
+                )
+                break
+            continue
+        consecutive_failures = 0
 
         if metadata:
             updated_rows.append(
@@ -527,8 +550,8 @@ def backfill_metadata(
                 }
             )
 
-        for _, key in similar_guids:
-            new_keys.add(key)
+        for _, similar_key in similar_guids:
+            new_keys.add(similar_key)
 
     updated_df = pl.from_records(updated_rows, schema=DF_SCHEMA)
     new_df = pl.DataFrame(
