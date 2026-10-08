@@ -18,7 +18,7 @@ classifiers = [
 ]
 dependencies = [
     "click>=8.1.8,<9",
-    "polars>=1.30,<2",
+    "polars>=1.30,<3",
     "tqdm>=4.21,<5",
 ]
 scripts.plex-index = "plex_index:main"
