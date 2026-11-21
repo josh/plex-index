@@ -208,7 +208,7 @@ func TestChangeSummary(t *testing.T) {
 	}
 }
 
-func TestFormatSummary(t *testing.T) {
+func TestColumnStats(t *testing.T) {
 	old := testIndex(t, map[string]uint16{
 		"000000000000000000000000": 2000,
 		"000000000000000000000001": 2001,
@@ -226,33 +226,18 @@ func TestFormatSummary(t *testing.T) {
 	r.Success = new(true)
 	cur[k1] = r
 
-	want := `## plex.parquet
-
-| name | dtype | null | true | false | unique | updated |
-|------|-------|------|------|-------|--------|---------|
-| key | binary |  |  |  | true |  |
-| type | str | 1 (33.3%) |  |  |  |  |
-| success | bool | 1 (33.3%) | 1 (33.3%) | 1 (33.3%) | true | 1 (33.3%) |
-| retrieved_at | datetime[ns] | 3 (100.0%) |  |  | true |  |
-| year | u16 | 1 (33.3%) |  |  | true | 1 (33.3%) |
-| imdb_numeric_id | u32 | 3 (100.0%) |  |  | true |  |
-| tmdb_id | u32 | 3 (100.0%) |  |  | true |  |
-| tvdb_id | u32 | 3 (100.0%) |  |  | true |  |
-
-shape: (3, 8)
-changes: +1 -0 ~1
-size: 1.5MB
-`
-	if got := formatSummary(old, cur, "plex.parquet", 3<<19); got != want {
-		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	want := []columnStat{
+		{name: "key", dtype: "binary", unique: true},
+		{name: "type", dtype: "str", nulls: 1},
+		{name: "success", dtype: "bool", nulls: 1, trues: 1, falses: 1, unique: true, updated: 1},
+		{name: "retrieved_at", dtype: "datetime[ns]", nulls: 3, unique: true},
+		{name: "year", dtype: "u16", nulls: 1, unique: true, updated: 1},
+		{name: "imdb_numeric_id", dtype: "u32", nulls: 3, unique: true},
+		{name: "tmdb_id", dtype: "u32", nulls: 3, unique: true},
+		{name: "tvdb_id", dtype: "u32", nulls: 3, unique: true},
 	}
-}
-
-func TestCommas(t *testing.T) {
-	for n, want := range map[int]string{0: "0", 12: "12", 123: "123", 1234: "1,234", 673430: "673,430", 1234567: "1,234,567", -1234: "-1,234"} {
-		if got := commas(n); got != want {
-			t.Errorf("commas(%d) = %q, want %q", n, got, want)
-		}
+	if got := columnStats(old, cur); !slices.Equal(got, want) {
+		t.Errorf("columnStats() = %+v, want %+v", got, want)
 	}
 }
 
