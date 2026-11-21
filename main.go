@@ -37,7 +37,7 @@ const (
 	plexTVURL              = "https://plex.tv"
 	maxAttempts            = 4
 	maxConsecutiveFailures = 10
-	defaultSearchLimit     = 500
+	defaultSearchLimit     = 2000
 	rowGroupSize           = 128 * 1024
 )
 
