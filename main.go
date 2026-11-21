@@ -448,11 +448,14 @@ func (p plex) searchKeys(ctx context.Context, query string, yield func(ratingKey
 
 func (p plex) randomSearchKeys(ctx context.Context, limit int, yield func(ratingKey) bool) error {
 	queue := strings.Split("abcdefghijklmnopqrstuvwxyz", "")
-	rand.Shuffle(len(queue), func(i, j int) { queue[i], queue[j] = queue[j], queue[i] })
 	seen := make(map[string]bool)
 	for queries := 0; len(queue) > 0; {
-		query := queue[0]
-		queue = queue[1:]
+		// Random picks spread each run across the suggestion graph; FIFO
+		// re-walks the same well-indexed terms first every run.
+		i := rand.IntN(len(queue))
+		query := queue[i]
+		queue[i] = queue[len(queue)-1]
+		queue = queue[:len(queue)-1]
 		if seen[query] {
 			continue
 		}
