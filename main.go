@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	Version                = "0.0.0"
+	Version                = "0.1.0"
 	defaultDiscoverURL     = "https://discover.provider.plex.tv"
 	defaultMetadataURL     = "https://metadata.provider.plex.tv"
 	plexTVURL              = "https://plex.tv"
