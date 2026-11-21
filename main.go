@@ -38,6 +38,7 @@ const (
 	plexTVURL              = "https://plex.tv"
 	maxAttempts            = 4
 	maxConsecutiveFailures = 10
+	metadataBatchSize      = 100
 	defaultSearchLimit     = 2000
 	rowGroupSize           = 128 * 1024
 )
@@ -295,7 +296,7 @@ func newPlexRequest(ctx context.Context, rawURL, token string) (*http.Request, e
 	return req, nil
 }
 
-func (p plex) provider(ctx context.Context, baseURL, path string, query url.Values, timeout time.Duration) ([]byte, error) {
+func (p plex) provider(ctx context.Context, baseURL, path string, query url.Values, header http.Header, timeout time.Duration) ([]byte, error) {
 	u := strings.TrimRight(baseURL, "/") + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -303,6 +304,9 @@ func (p plex) provider(ctx context.Context, baseURL, path string, query url.Valu
 	req, err := newPlexRequest(ctx, u, p.token)
 	if err != nil {
 		return nil, err
+	}
+	for k, v := range header {
+		req.Header[k] = v
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Plex-Provider-Version", "7.2.0")
@@ -410,7 +414,7 @@ func (p plex) search(ctx context.Context, query string) ([]ratingKey, []string, 
 		"searchTypes":     {"movies,tv"},
 		"includeMetadata": {"1"},
 		"searchProviders": {"discover"},
-	}, 10*time.Second)
+	}, nil, 10*time.Second)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -516,20 +520,22 @@ func (p plex) watchlistKeys(ctx context.Context, source string, yield func(ratin
 	return nil
 }
 
+type metadataItem struct {
+	RatingKey string `json:"ratingKey"`
+	Type      string `json:"type"`
+	Year      uint16 `json:"year"`
+	PlexGUID  string `json:"guid"`
+	Guid      []struct {
+		ID string `json:"id"`
+	} `json:"Guid"`
+	Similar []struct {
+		GUID string `json:"guid"`
+	} `json:"Similar"`
+}
+
 type metadataResponse struct {
 	MediaContainer struct {
-		Metadata []struct {
-			RatingKey string `json:"ratingKey"`
-			Type      string `json:"type"`
-			Year      uint16 `json:"year"`
-			PlexGUID  string `json:"guid"`
-			Guid      []struct {
-				ID string `json:"id"`
-			} `json:"Guid"`
-			Similar []struct {
-				GUID string `json:"guid"`
-			} `json:"Similar"`
-		} `json:"Metadata"`
+		Metadata []metadataItem `json:"Metadata"`
 	} `json:"MediaContainer"`
 }
 
@@ -547,14 +553,18 @@ func parseID(key ratingKey, guid, prefix, trim string) *uint32 {
 	return &v
 }
 
-func (p plex) metadata(ctx context.Context, key ratingKey, now time.Time) (row, []ratingKey, error) {
+func notFoundRow(key ratingKey, now time.Time) row {
 	r := newRow(key)
 	r.RetrievedAt = &now
-	body, err := p.provider(ctx, p.metadataURL, "/library/metadata/"+key.String(), nil, 30*time.Second)
+	r.Success = new(false)
+	return r
+}
+
+func (p plex) metadata(ctx context.Context, key ratingKey, now time.Time) (row, []ratingKey, error) {
+	body, err := p.provider(ctx, p.metadataURL, "/library/metadata/"+key.String(), nil, nil, 30*time.Second)
 	var se *statusError
 	if errors.As(err, &se) && se.status == http.StatusNotFound {
-		r.Success = new(false)
-		return r, nil, nil
+		return notFoundRow(key, now), nil, nil
 	}
 	if err != nil {
 		return row{}, nil, err
@@ -570,6 +580,41 @@ func (p plex) metadata(ctx context.Context, key ratingKey, now time.Time) (row, 
 	if m.RatingKey != key.String() {
 		return row{}, nil, fmt.Errorf("Plex metadata %s: got rating key %s", key, m.RatingKey)
 	}
+	return metadataRow(key, m, now)
+}
+
+func (p plex) metadataBatch(ctx context.Context, keys []ratingKey) (map[ratingKey]metadataItem, error) {
+	names := make([]string, 0, len(keys))
+	wanted := make(map[string]ratingKey, len(keys))
+	for _, key := range keys {
+		names = append(names, key.String())
+		wanted[key.String()] = key
+	}
+	header := http.Header{}
+	header.Set("X-Plex-Container-Start", "0")
+	header.Set("X-Plex-Container-Size", strconv.Itoa(metadataBatchSize))
+	body, err := p.provider(ctx, p.metadataURL, "/library/metadata/"+strings.Join(names, ","), nil, header, 60*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var resp metadataResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parse Plex metadata batch: %w", err)
+	}
+	items := make(map[ratingKey]metadataItem, len(resp.MediaContainer.Metadata))
+	for _, m := range resp.MediaContainer.Metadata {
+		key, ok := wanted[m.RatingKey]
+		if !ok {
+			return nil, fmt.Errorf("Plex metadata batch: got unrequested rating key %s", m.RatingKey)
+		}
+		items[key] = m
+	}
+	return items, nil
+}
+
+func metadataRow(key ratingKey, m metadataItem, now time.Time) (row, []ratingKey, error) {
+	r := newRow(key)
+	r.RetrievedAt = &now
 	switch m.Type {
 	case "episode", "movie", "season", "show":
 	default:
@@ -663,18 +708,30 @@ func (p plex) backfill(ctx context.Context, idx index, refreshLimit int) error {
 	keys := backfillKeys(idx, refreshLimit)
 	slog.Info("fetching Plex metadata", "keys", len(keys))
 	var similar []ratingKey
-	fetched, missing, failures, consecutive := 0, 0, 0, 0
-	for i, key := range keys {
-		if i > 0 && i%100 == 0 {
-			slog.Info("fetching Plex metadata", "progress", i, "total", len(keys))
+	fetched, missing, failures, requests, confirmed, consecutive := 0, 0, 0, 0, 0, 0
+	record := func(key ratingKey, r row, sim []ratingKey) {
+		idx[key] = r
+		if *r.Success {
+			fetched++
+		} else {
+			missing++
 		}
-		r, sim, err := p.metadata(ctx, key, time.Now().UTC())
+		similar = append(similar, sim...)
+	}
+	batches := 0
+	for batch := range slices.Chunk(keys, metadataBatchSize) {
+		if batches > 0 && batches%10 == 0 {
+			slog.Info("fetching Plex metadata", "progress", batches*metadataBatchSize, "total", len(keys))
+		}
+		batches++
+		requests++
+		items, err := p.metadataBatch(ctx, batch)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			slog.Warn("failed to fetch Plex metadata", "rating_key", key, "err", err)
-			failures++
+			slog.Warn("failed to fetch Plex metadata batch", "keys", len(batch), "err", err)
+			failures += len(batch)
 			consecutive++
 			if consecutive == maxConsecutiveFailures {
 				slog.Error("giving up Plex metadata backfill", "consecutive_failures", consecutive)
@@ -683,13 +740,38 @@ func (p plex) backfill(ctx context.Context, idx index, refreshLimit int) error {
 			continue
 		}
 		consecutive = 0
-		idx[key] = r
-		if *r.Success {
-			fetched++
-		} else {
-			missing++
+		now := time.Now().UTC()
+		for _, key := range batch {
+			if m, ok := items[key]; ok {
+				r, sim, err := metadataRow(key, m, now)
+				if err != nil {
+					slog.Warn("failed to parse Plex metadata", "rating_key", key, "err", err)
+					failures++
+					continue
+				}
+				record(key, r, sim)
+				continue
+			}
+			if prev := idx[key].Success; prev != nil && !*prev {
+				record(key, notFoundRow(key, now), nil)
+				continue
+			}
+			requests++
+			confirmed++
+			r, sim, err := p.metadata(ctx, key, now)
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				slog.Warn("failed to fetch Plex metadata", "rating_key", key, "err", err)
+				failures++
+				continue
+			}
+			if *r.Success {
+				slog.Warn("Plex metadata batch omitted a live rating key", "rating_key", key)
+			}
+			record(key, r, sim)
 		}
-		similar = append(similar, sim...)
 	}
 	added := 0
 	for _, key := range similar {
@@ -702,6 +784,8 @@ func (p plex) backfill(ctx context.Context, idx index, refreshLimit int) error {
 		"not_found", missing,
 		"failed", failures,
 		"similar_added", added,
+		"requests", requests,
+		"confirmed", confirmed,
 		"duration", since(start),
 	)
 	return nil

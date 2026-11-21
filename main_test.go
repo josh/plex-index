@@ -413,6 +413,46 @@ func TestMetadataNotFound(t *testing.T) {
 	}
 }
 
+func TestMetadataBatch(t *testing.T) {
+	p := requireMetadataAccess(t)
+	live := []ratingKey{
+		mustKey(t, "5d776be17a53e9001e732ab9"),
+		mustKey(t, "5d9c0874ffd9ef001e99607a"),
+		mustKey(t, "5d9c092f2df347001e3bdaa4"),
+		mustKey(t, "5d9c0c5502391c001f5ae5d1"),
+	}
+	dead := mustKey(t, "000000000000000000000000")
+	items, err := p.metadataBatch(t.Context(), append(slices.Clone(live), dead))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := items[dead]; ok {
+		t.Errorf("%s: expected no item", dead)
+	}
+	now := time.Now().UTC()
+	for _, key := range live {
+		m, ok := items[key]
+		if !ok {
+			t.Errorf("%s: missing from batch", key)
+			continue
+		}
+		got, gotSimilar, err := metadataRow(key, m, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, wantSimilar, err := p.metadata(t.Context(), key, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rowsEqual(got, want) {
+			t.Errorf("%s: batch row %+v, single row %+v", key, got, want)
+		}
+		if !slices.Equal(gotSimilar, wantSimilar) {
+			t.Errorf("%s: batch similar %v, single similar %v", key, gotSimilar, wantSimilar)
+		}
+	}
+}
+
 func TestDevice(t *testing.T) {
 	p := testPlex()
 	if p.serverName == "" || p.token == "" {
