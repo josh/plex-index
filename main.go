@@ -37,7 +37,7 @@ const (
 	plexTVURL              = "https://plex.tv"
 	maxAttempts            = 4
 	maxConsecutiveFailures = 10
-	maxSearchQueries       = 500
+	defaultSearchLimit     = 500
 	rowGroupSize           = 128 * 1024
 )
 
@@ -446,7 +446,7 @@ func (p plex) searchKeys(ctx context.Context, query string, yield func(ratingKey
 	return true, nil
 }
 
-func (p plex) randomSearchKeys(ctx context.Context, yield func(ratingKey) bool) error {
+func (p plex) randomSearchKeys(ctx context.Context, limit int, yield func(ratingKey) bool) error {
 	queue := strings.Split("abcdefghijklmnopqrstuvwxyz", "")
 	rand.Shuffle(len(queue), func(i, j int) { queue[i], queue[j] = queue[j], queue[i] })
 	seen := make(map[string]bool)
@@ -456,8 +456,8 @@ func (p plex) randomSearchKeys(ctx context.Context, yield func(ratingKey) bool) 
 		if seen[query] {
 			continue
 		}
-		if queries == maxSearchQueries {
-			slog.Warn("reached Plex search query limit", "limit", maxSearchQueries)
+		if queries >= limit {
+			slog.Warn("reached Plex search query limit", "limit", limit)
 			return nil
 		}
 		queries++
@@ -628,7 +628,7 @@ func (p plex) discoverKeys(ctx context.Context, cfg config, idx index) error {
 
 	if !done() {
 		before := added
-		if err := p.randomSearchKeys(ctx, add); err != nil {
+		if err := p.randomSearchKeys(ctx, cfg.searchLimit, add); err != nil {
 			return fmt.Errorf("random search discovery: %w", err)
 		}
 		slog.Info("finished random search discovery", "added", added-before)
@@ -846,6 +846,7 @@ type config struct {
 	watchlistURL  string
 	discoverLimit int
 	refreshLimit  int
+	searchLimit   int
 	dryRun        bool
 }
 
@@ -914,6 +915,9 @@ func parseConfig(level *slog.LevelVar) (config, error) {
 	if cfg.refreshLimit, err = envInt("REFRESH_LIMIT", 10); err != nil {
 		return cfg, err
 	}
+	if cfg.searchLimit, err = envInt("SEARCH_LIMIT", defaultSearchLimit); err != nil {
+		return cfg, err
+	}
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "usage: %s [flags] FILE\n", filepath.Base(os.Args[0]))
@@ -927,6 +931,7 @@ func parseConfig(level *slog.LevelVar) (config, error) {
 	flag.StringVar(&cfg.watchlistURL, "imdb-watchlist-url", cfg.watchlistURL, "IMDb watchlist CSV URL or path (env IMDB_WATCHLIST_URL)")
 	flag.IntVar(&cfg.discoverLimit, "discover-limit", cfg.discoverLimit, "maximum new rating keys to discover (env DISCOVER_LIMIT)")
 	flag.IntVar(&cfg.refreshLimit, "refresh-limit", cfg.refreshLimit, "number of oldest rows to refresh (env REFRESH_LIMIT)")
+	flag.IntVar(&cfg.searchLimit, "search-limit", cfg.searchLimit, "maximum random Plex search queries (env SEARCH_LIMIT)")
 	flag.BoolVar(&cfg.dryRun, "dry-run", cfg.dryRun, "skip writing the index (env DRY_RUN)")
 	flag.BoolVar(&cfg.dryRun, "n", cfg.dryRun, "shorthand for -dry-run")
 	verbose := flag.Bool("v", false, "enable verbose logging")
@@ -965,6 +970,7 @@ func run(ctx context.Context, level *slog.LevelVar) error {
 		"imdb_watchlist", cfg.watchlistURL,
 		"discover_limit", cfg.discoverLimit,
 		"refresh_limit", cfg.refreshLimit,
+		"search_limit", cfg.searchLimit,
 		"dry_run", cfg.dryRun,
 	)
 
