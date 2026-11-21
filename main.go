@@ -761,82 +761,51 @@ func changeSummary(old, cur index) (added, removed, updated int) {
 	return added, removed, updated
 }
 
-func commas(n int) string {
-	s := strconv.Itoa(n)
-	if n < 0 {
-		return "-" + commas(-n)
-	}
-	for i := len(s) - 3; i > 0; i -= 3 {
-		s = s[:i] + "," + s[i:]
-	}
-	return s
+type columnStat struct {
+	name    string
+	dtype   string
+	nulls   int
+	trues   int
+	falses  int
+	unique  bool
+	updated int
 }
 
-func formatSummary(old, cur index, filename string, size int64) string {
-	total := len(cur)
-	pct := func(n int) string {
-		if n == 0 || total == 0 {
-			return ""
-		}
-		return fmt.Sprintf("%s (%.1f%%)", commas(n), 100*float64(n)/float64(total))
-	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "## %s\n\n", filename)
-	b.WriteString("| name | dtype | null | true | false | unique | updated |\n")
-	b.WriteString("|------|-------|------|------|-------|--------|---------|\n")
+func columnStats(old, cur index) []columnStat {
+	stats := make([]columnStat, len(columns))
 	for i, c := range columns {
-		nulls, trues, falses, updated := 0, 0, 0, 0
-		distinct := make(map[any]bool, total)
+		s := columnStat{name: c.name, dtype: c.dtype}
+		distinct := make(map[any]bool, len(cur))
 		for key, r := range cur {
 			v := c.value(r)
 			if o, ok := old[key]; ok && i > 0 && c.value(o) != v {
-				updated++
+				s.updated++
 			}
 			switch v {
 			case nil:
-				nulls++
+				s.nulls++
 				continue
 			case true:
-				trues++
+				s.trues++
 			case false:
-				falses++
+				s.falses++
 			}
 			distinct[v] = true
 		}
-		var trueCell, falseCell, uniqueCell string
-		if c.dtype == "bool" {
-			trueCell, falseCell = pct(trues), pct(falses)
-		}
-		if len(distinct) == total-nulls {
-			uniqueCell = "true"
-		}
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n",
-			c.name, c.dtype, pct(nulls), trueCell, falseCell, uniqueCell, pct(updated))
+		s.unique = len(distinct) == len(cur)-s.nulls
+		stats[i] = s
 	}
-	added, removed, updated := changeSummary(old, cur)
-	fmt.Fprintf(&b, "\nshape: (%s, %d)\n", commas(total), len(columns))
-	fmt.Fprintf(&b, "changes: +%s -%s ~%s\n", commas(added), commas(removed), commas(updated))
-	if size > 0 {
-		fmt.Fprintf(&b, "size: %.1fMB\n", float64(size)/(1<<20))
-	}
-	return b.String()
+	return stats
 }
 
-func appendStepSummary(text string) error {
-	path := os.Getenv("GITHUB_STEP_SUMMARY")
-	if path == "" {
-		return nil
+func logColumnStats(old, cur index) {
+	for _, s := range columnStats(old, cur) {
+		attrs := []any{"name", s.name, "dtype", s.dtype, "nulls", s.nulls, "unique", s.unique, "updated", s.updated}
+		if s.dtype == "bool" {
+			attrs = append(attrs, "true", s.trues, "false", s.falses)
+		}
+		slog.Info("column stats", attrs...)
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(text); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
 }
 
 type config struct {
@@ -1016,11 +985,7 @@ func run(ctx context.Context, level *slog.LevelVar) error {
 		slog.Info("wrote Plex index", "path", cfg.output, "rows", len(idx), "bytes", size)
 	}
 
-	summary := formatSummary(old, idx, filepath.Base(cfg.output), size)
-	slog.Debug("summary", "text", summary)
-	if err := appendStepSummary(summary); err != nil {
-		return err
-	}
+	logColumnStats(old, idx)
 	added, removed, updated := changeSummary(old, idx)
 	slog.Info("finished index update",
 		"rows", len(idx),

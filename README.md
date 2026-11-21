@@ -70,5 +70,3 @@ The updated index is written to `FILE`. The existing index is read from `PLEX_IN
 | `DRY_RUN` | `-dry-run`, `-n` | Do everything except write the index. |
 | | `-v` | Enable verbose logging. |
 | | `-version`, `-V` | Print the version. |
-
-When `GITHUB_STEP_SUMMARY` is set, a markdown summary of column stats and changes is appended to it.
