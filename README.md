@@ -66,7 +66,7 @@ The updated index is written to `FILE`. The existing index is read from `PLEX_IN
 | `IMDB_WATCHLIST_URL` | `-imdb-watchlist-url` | IMDb watchlist CSV URL or local path whose titles are searched on Plex. |
 | `DISCOVER_LIMIT` | `-discover-limit` | Maximum new rating keys to add. Defaults to 10. |
 | `REFRESH_LIMIT` | `-refresh-limit` | Number of oldest rows to refresh. Defaults to 10. |
-| `SEARCH_LIMIT` | `-search-limit` | Maximum random Plex search queries per run. Defaults to 500. |
+| `SEARCH_LIMIT` | `-search-limit` | Maximum random Plex search queries per run. Defaults to 2000. |
 | `DRY_RUN` | `-dry-run`, `-n` | Do everything except write the index. |
 | | `-v` | Enable verbose logging. |
 
