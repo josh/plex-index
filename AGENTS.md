@@ -1,84 +1,56 @@
 # Agents Guide
 
-This project uses Python 3.12 and manages dependencies with `uv`.
+This project is written in Go and uses Go modules for dependency management. The repository assumes Go 1.26 or newer. Avoid adding dependencies beyond `github.com/parquet-go/parquet-go`.
 
 ## Setup
 
-Install Python 3.12 or newer.
-
-Install `uv` with:
-
-```sh
-$ curl -LsSf https://astral.sh/uv/install.sh | sh
-# or
-$ pipx install uv
-```
-
-Then install dependencies with:
+1. Install Go 1.26 or later.
+2. Download dependencies with:
 
 ```sh
-$ uv sync
+go mod download
 ```
-
-Note that when running in an offline sandbox, you may need to run uv with the `--offline` flag when calling `uv run`.
 
 ## Testing
-
-Check code style with ruff:
-
-```sh
-$ uv run ruff format --diff .
-$ uv run ruff check .
-```
-
-Check type correctness with ty:
-
-```sh
-$ uv run ty check
-```
 
 Run the test suite with:
 
 ```sh
-$ uv run pytest
+go test ./...
 ```
 
-Avoid [pytest's monkeypatching and mocking features](https://docs.pytest.org/en/stable/how-to/monkeypatch.html). Tests may make real network connections to the API service.
+Tests make real network requests to Plex. Avoid mocks and fakes. Tests that need credentials skip unless `PLEX_TOKEN`, `PLEX_SERVER_NAME`, `PLEX_SERVER_URL`, `PLEX_DISCOVER_URL`, `PLEX_METADATA_URL`, `IMDB_WATCHLIST_URL` or `PLEX_INDEX_URL` are set.
 
 ## Formatting
 
-You can automatically fix most formatting issues with:
+Format code with:
 
 ```sh
-$ uv tool run ruff format .
-```
-
-Functions should be sorted in dependency order with:
-
-```sh
-$ uv tool run ssort .
-```
-
-After making changes to `pyproject.toml`, ensure its formatted with `pyproject-fmt`.
-
-```sh
-$ uv tool run pyproject-fmt pyproject.toml
+go fmt ./...
 ```
 
 ## Code Quality
 
-You can generate a code coverage report while running the test suite with:
+Run vet and static analysis tools before committing:
 
 ```sh
-$ uv run pytest --cov=plex_index --cov-report=term-missing .
+go vet ./...
 ```
 
-Optionally scan for dead code with vulture:
+Optionally run `golangci-lint` for additional checks:
 
 ```sh
-$ uv tool run vulture --exclude .venv/ .
+golangci-lint run ./...
 ```
 
-## Comments and Docstrings
+## Building
 
-Avoid superfluous comments and Python docstrings. Only include them when they add value or clarify complex logic.
+Build the project with:
+
+```sh
+go build ./...
+```
+
+## Comments
+
+Keep comments concise. Only add them when they clarify non-obvious logic.

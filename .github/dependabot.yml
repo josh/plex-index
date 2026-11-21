@@ -1,17 +1,11 @@
 version: 2
 updates:
-  - package-ecosystem: "uv"
+  - package-ecosystem: "gomod"
     directory: "/"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 14
-    versioning-strategy: lockfile-only
-    ignore:
-      - dependency-name: "types-*"
-        update-types: ["version-update:semver-patch"]
-      - dependency-name: "ruff"
-        update-types: ["version-update:semver-patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

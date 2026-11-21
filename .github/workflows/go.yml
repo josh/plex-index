@@ -1,0 +1,44 @@
+name: Go
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: self-hosted
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+
+      - name: Tidy
+        run: |
+          go mod tidy -diff
+
+      - name: Format
+        run: |
+          test -z "$(gofmt -l .)" || (gofmt -d . && exit 1)
+
+      - name: Vet
+        run: |
+          go vet ./...
+
+      - name: Build
+        run: |
+          go build
+
+      - name: Test
+        env:
+          PLEX_TOKEN: ${{ secrets.PLEX_TOKEN }}
+          PLEX_SERVER_NAME: ${{ secrets.PLEX_SERVER_NAME }}
+          IMDB_WATCHLIST_URL: ${{ vars.IMDB_WATCHLIST_URL }}
+          PLEX_INDEX_URL: ${{ vars.PLEX_INDEX_URL || 'https://josh.github.io/plex-index/plex.parquet' }}
+        run: |
+          go test -v ./...
