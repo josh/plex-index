@@ -1,12 +1,12 @@
 # plex-index
 
-Index of Plex rating keys mapped to IMDb, TMDb and TVDb IDs, published as a parquet file at <https://josh.github.io/plex-index/plex.parquet>.
+Index of Plex rating keys mapped to IMDb, TMDb and TVDb IDs, stored as a parquet file.
 
 Each run grows the index by discovering new rating keys from a Plex Media Server library, an IMDb watchlist and random Plex Discover searches, then fetches metadata for new keys and refreshes the oldest rows.
 
 ```
 >>> import polars as pl
->>> pl.read_parquet("https://josh.github.io/plex-index/plex.parquet").filter(
+>>> pl.read_parquet("https://example.com/plex-index/plex.parquet").filter(
     pl.col("imdb_numeric_id") == 111161
 ).select(
     pl.format(
@@ -43,7 +43,7 @@ shape: (1, 3)
 
 ```sh
 go install github.com/josh/plex-index@latest
-PLEX_INDEX_URL=https://josh.github.io/plex-index/plex.parquet \
+PLEX_INDEX_URL=https://example.com/plex-index/plex.parquet \
   PLEX_TOKEN=... \
   plex-index plex.parquet
 ```
