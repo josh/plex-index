@@ -362,7 +362,7 @@ func TestSearchKeys(t *testing.T) {
 
 func TestRandomSearchKeys(t *testing.T) {
 	keys := collect(t, 10, func(yield func(ratingKey) bool) error {
-		return testPlex().randomSearchKeys(t.Context(), yield)
+		return testPlex().randomSearchKeys(t.Context(), defaultSearchLimit, yield)
 	})
 	if len(keys) != 10 {
 		t.Errorf("got %d keys, want 10", len(keys))
