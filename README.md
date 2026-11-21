@@ -70,7 +70,3 @@ The updated index is written to `FILE`. The existing index is read from `PLEX_IN
 | | `-v` | Enable verbose logging. |
 
 When `GITHUB_STEP_SUMMARY` is set, a markdown summary of column stats and changes is appended to it.
-
-## See Also
-
-[josh/imdb-plex-sync](https://github.com/josh/imdb-plex-sync) uses this index to sync an IMDb watchlist to Plex.
