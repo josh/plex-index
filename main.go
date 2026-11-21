@@ -32,6 +32,7 @@ import (
 )
 
 const (
+	Version                = "0.0.0"
 	defaultDiscoverURL     = "https://discover.provider.plex.tv"
 	defaultMetadataURL     = "https://metadata.provider.plex.tv"
 	plexTVURL              = "https://plex.tv"
@@ -851,6 +852,7 @@ type config struct {
 	refreshLimit  int
 	searchLimit   int
 	dryRun        bool
+	showVersion   bool
 }
 
 func (c config) libraryEnabled() bool {
@@ -938,7 +940,13 @@ func parseConfig(level *slog.LevelVar) (config, error) {
 	flag.BoolVar(&cfg.dryRun, "dry-run", cfg.dryRun, "skip writing the index (env DRY_RUN)")
 	flag.BoolVar(&cfg.dryRun, "n", cfg.dryRun, "shorthand for -dry-run")
 	verbose := flag.Bool("v", false, "enable verbose logging")
+	flag.BoolVar(&cfg.showVersion, "version", false, "print version information")
+	flag.BoolVar(&cfg.showVersion, "V", false, "shorthand for -version")
 	flag.Parse()
+
+	if cfg.showVersion {
+		return cfg, nil
+	}
 
 	if *verbose {
 		level.Set(slog.LevelDebug)
@@ -962,7 +970,12 @@ func run(ctx context.Context, level *slog.LevelVar) error {
 	if err != nil {
 		return err
 	}
+	if cfg.showVersion {
+		fmt.Println(Version)
+		return nil
+	}
 	slog.Info("starting index update",
+		"version", Version,
 		"output", cfg.output,
 		"plex_index", cfg.indexURL,
 		"plex_discover_url", cfg.discoverURL,
