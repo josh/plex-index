@@ -138,14 +138,47 @@ func TestBackfillKeys(t *testing.T) {
 	tieB := add("000000000000000000000004", new(base.Add(time.Hour)))
 	missing := add("000000000000000000000005", nil)
 
-	if got, want := backfillKeys(idx, 2), []ratingKey{missing, oldest, tieA}; !slices.Equal(got, want) {
-		t.Errorf("limit 2: got %v, want %v", got, want)
+	if got, _ := backfillKeys(idx, 2, nil); !slices.Equal(got, []ratingKey{missing, oldest, tieA}) {
+		t.Errorf("limit 2: got %v", got)
 	}
-	if got, want := backfillKeys(idx, 0), []ratingKey{missing}; !slices.Equal(got, want) {
-		t.Errorf("limit 0: got %v, want %v", got, want)
+	if got, _ := backfillKeys(idx, 0, nil); !slices.Equal(got, []ratingKey{missing}) {
+		t.Errorf("limit 0: got %v", got)
 	}
-	if got, want := backfillKeys(idx, 100), []ratingKey{missing, oldest, tieA, tieB, newest}; !slices.Equal(got, want) {
-		t.Errorf("limit 100: got %v, want %v", got, want)
+	if got, _ := backfillKeys(idx, 100, nil); !slices.Equal(got, []ratingKey{missing, oldest, tieA, tieB, newest}) {
+		t.Errorf("limit 100: got %v", got)
+	}
+
+	r := idx[newest]
+	r.IMDbNumericID = new(uint32(111161))
+	idx[newest] = r
+	got, n := backfillKeys(idx, 1, map[uint32]bool{111161: true})
+	if want := []ratingKey{missing, newest, oldest}; !slices.Equal(got, want) || n != 1 {
+		t.Errorf("priority: got %v (%d prioritized), want %v (1 prioritized)", got, n, want)
+	}
+}
+
+func TestReadWatchlist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watchlist.csv")
+	csv := "Const,Title\ntt0111161,The Shawshank Redemption\ntt0903747,\"Breaking Bad\"\n"
+	if err := os.WriteFile(path, []byte(csv), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wl, err := readWatchlist(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"The Shawshank Redemption", "Breaking Bad"}; !slices.Equal(wl.titles, want) {
+		t.Errorf("titles = %v, want %v", wl.titles, want)
+	}
+	if len(wl.imdbIDs) != 2 || !wl.imdbIDs[111161] || !wl.imdbIDs[903747] {
+		t.Errorf("imdbIDs = %v", wl.imdbIDs)
+	}
+
+	if err := os.WriteFile(path, []byte("Const,Title\nnope,Bad\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readWatchlist(t.Context(), path); err == nil {
+		t.Error("expected an error for an invalid IMDb ID")
 	}
 }
 
@@ -489,8 +522,12 @@ func TestWatchlistKeys(t *testing.T) {
 	if source == "" {
 		t.Skip("IMDB_WATCHLIST_URL not set")
 	}
+	wl, err := readWatchlist(t.Context(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
 	keys := collect(t, 10, func(yield func(ratingKey) bool) error {
-		return testPlex().watchlistKeys(t.Context(), source, yield)
+		return testPlex().watchlistKeys(t.Context(), wl.titles, yield)
 	})
 	if len(keys) != 10 {
 		t.Errorf("got %d keys, want 10", len(keys))

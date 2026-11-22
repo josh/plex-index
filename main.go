@@ -494,25 +494,47 @@ func (p plex) randomSearchKeys(ctx context.Context, limit int, yield func(rating
 
 var titleReplacer = strings.NewReplacer("#", "", "&", "", "'", "", `"`, "")
 
-func (p plex) watchlistKeys(ctx context.Context, source string, yield func(ratingKey) bool) error {
+type watchlist struct {
+	titles  []string
+	imdbIDs map[uint32]bool
+}
+
+func readWatchlist(ctx context.Context, source string) (watchlist, error) {
 	data, err := readSource(ctx, source, 10*time.Second)
 	if err != nil {
-		return err
+		return watchlist{}, err
 	}
 	records, err := csv.NewReader(bytes.NewReader(data)).ReadAll()
 	if err != nil {
-		return fmt.Errorf("parse IMDb watchlist: %w", err)
+		return watchlist{}, fmt.Errorf("parse IMDb watchlist: %w", err)
 	}
 	if len(records) == 0 {
-		return errors.New("IMDb watchlist is empty")
+		return watchlist{}, errors.New("IMDb watchlist is empty")
 	}
 	titleCol := slices.Index(records[0], "Title")
 	if titleCol < 0 {
-		return errors.New("IMDb watchlist has no Title column")
+		return watchlist{}, errors.New("IMDb watchlist has no Title column")
 	}
-	slog.Info("fetched IMDb watchlist", "titles", len(records)-1, "bytes", len(data))
+	idCol := slices.Index(records[0], "Const")
+	wl := watchlist{imdbIDs: make(map[uint32]bool)}
 	for _, record := range records[1:] {
-		ok, err := p.searchKeys(ctx, titleReplacer.Replace(record[titleCol]), yield)
+		wl.titles = append(wl.titles, record[titleCol])
+		if idCol < 0 {
+			continue
+		}
+		n, err := strconv.ParseUint(strings.TrimPrefix(record[idCol], "tt"), 10, 32)
+		if err != nil {
+			return watchlist{}, fmt.Errorf("invalid IMDb ID %q", record[idCol])
+		}
+		wl.imdbIDs[uint32(n)] = true
+	}
+	slog.Info("fetched IMDb watchlist", "titles", len(wl.titles), "imdb_ids", len(wl.imdbIDs), "bytes", len(data))
+	return wl, nil
+}
+
+func (p plex) watchlistKeys(ctx context.Context, titles []string, yield func(ratingKey) bool) error {
+	for _, title := range titles {
+		ok, err := p.searchKeys(ctx, titleReplacer.Replace(title), yield)
 		if !ok || err != nil {
 			return err
 		}
@@ -643,7 +665,7 @@ func metadataRow(key ratingKey, m metadataItem, now time.Time) (row, []ratingKey
 	return r, similar, nil
 }
 
-func (p plex) discoverKeys(ctx context.Context, cfg config, idx index) error {
+func (p plex) discoverKeys(ctx context.Context, cfg config, wl watchlist, idx index) error {
 	if cfg.discoverLimit <= 0 {
 		return nil
 	}
@@ -667,9 +689,9 @@ func (p plex) discoverKeys(ctx context.Context, cfg config, idx index) error {
 		slog.Warn("skipping Plex library discovery")
 	}
 
-	if !done() && cfg.watchlistURL != "" {
+	if !done() && len(wl.titles) > 0 {
 		before := added
-		if err := p.watchlistKeys(ctx, cfg.watchlistURL, add); err != nil {
+		if err := p.watchlistKeys(ctx, wl.titles, add); err != nil {
 			return fmt.Errorf("IMDb watchlist discovery: %w", err)
 		}
 		slog.Info("finished IMDb watchlist discovery", "added", added-before)
@@ -687,26 +709,32 @@ func (p plex) discoverKeys(ctx context.Context, cfg config, idx index) error {
 	return nil
 }
 
-func backfillKeys(idx index, refreshLimit int) []ratingKey {
-	var missing, retrieved []ratingKey
+func backfillKeys(idx index, refreshLimit int, priority map[uint32]bool) ([]ratingKey, int) {
+	var missing, prioritized, retrieved []ratingKey
 	for key, r := range idx {
-		if r.RetrievedAt == nil {
+		switch {
+		case r.RetrievedAt == nil:
 			missing = append(missing, key)
-		} else {
+		case r.IMDbNumericID != nil && priority[*r.IMDbNumericID]:
+			prioritized = append(prioritized, key)
+		default:
 			retrieved = append(retrieved, key)
 		}
 	}
-	slices.SortFunc(missing, func(a, b ratingKey) int { return bytes.Compare(a[:], b[:]) })
+	byKey := func(a, b ratingKey) int { return bytes.Compare(a[:], b[:]) }
+	slices.SortFunc(missing, byKey)
+	slices.SortFunc(prioritized, byKey)
 	slices.SortFunc(retrieved, func(a, b ratingKey) int {
-		return cmp.Or(idx[a].RetrievedAt.Compare(*idx[b].RetrievedAt), bytes.Compare(a[:], b[:]))
+		return cmp.Or(idx[a].RetrievedAt.Compare(*idx[b].RetrievedAt), byKey(a, b))
 	})
-	return append(missing, retrieved[:min(max(refreshLimit, 0), len(retrieved))]...)
+	keys := append(missing, prioritized...)
+	return append(keys, retrieved[:min(max(refreshLimit, 0), len(retrieved))]...), len(prioritized)
 }
 
-func (p plex) backfill(ctx context.Context, idx index, refreshLimit int) error {
+func (p plex) backfill(ctx context.Context, idx index, refreshLimit int, priority map[uint32]bool) error {
 	start := time.Now()
-	keys := backfillKeys(idx, refreshLimit)
-	slog.Info("fetching Plex metadata", "keys", len(keys))
+	keys, watchlistRows := backfillKeys(idx, refreshLimit, priority)
+	slog.Info("fetching Plex metadata", "keys", len(keys), "watchlist_rows", watchlistRows)
 	var similar []ratingKey
 	fetched, missing, failures, requests, confirmed, consecutive := 0, 0, 0, 0, 0, 0
 	record := func(key ratingKey, r row, sim []ratingKey) {
@@ -1049,10 +1077,16 @@ func run(ctx context.Context, level *slog.LevelVar) error {
 	}
 	idx := maps.Clone(old)
 	p := plex{discoverURL: cfg.discoverURL, metadataURL: cfg.metadataURL, serverURL: cfg.serverURL, serverName: cfg.serverName, token: cfg.token}
-	if err := p.discoverKeys(ctx, cfg, idx); err != nil {
+	var wl watchlist
+	if cfg.watchlistURL != "" {
+		if wl, err = readWatchlist(ctx, cfg.watchlistURL); err != nil {
+			return fmt.Errorf("IMDb watchlist: %w", err)
+		}
+	}
+	if err := p.discoverKeys(ctx, cfg, wl, idx); err != nil {
 		return err
 	}
-	if err := p.backfill(ctx, idx, cfg.refreshLimit); err != nil {
+	if err := p.backfill(ctx, idx, cfg.refreshLimit, wl.imdbIDs); err != nil {
 		return err
 	}
 	if len(idx) < len(old) {
